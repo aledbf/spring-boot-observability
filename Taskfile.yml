@@ -1,0 +1,65 @@
+version: '3'
+
+vars:
+  K6: docker run --rm -i --add-host=host.docker.internal:host-gateway -v {{.ROOT_DIR}}:/scripts grafana/k6:latest
+  ROOT_DIR:
+    sh: pwd
+
+tasks:
+  default:
+    cmds: [task --list]
+
+  up:
+    desc: Start all services (add --build to rebuild)
+    cmds:
+      - docker-compose up -d {{.CLI_ARGS}}
+
+  down:
+    desc: Stop all services (add -v to remove volumes)
+    cmds:
+      - docker-compose down {{.CLI_ARGS}}
+
+  logs:
+    desc: Show logs (e.g., task logs -- app-a app-b)
+    cmds:
+      - docker-compose logs -f {{.CLI_ARGS}}
+
+  ps:
+    desc: Show running services
+    cmds:
+      - docker-compose ps
+
+  test:
+    desc: Run load test (e.g., task test -- --vus 20 --duration 60s)
+    cmds:
+      - '{{.K6}} run {{.CLI_ARGS}} /scripts/k6-script.js'
+
+  alerts:
+    desc: Show firing alerts
+    cmds:
+      - 'curl -s http://localhost:9090/api/v1/alerts | jq -r ''.data.alerts[] | "\(.labels.alertname) [\(.state)] - \(.labels.job // "fleet")"'''
+
+  urls:
+    desc: Show URLs for all services
+    cmds:
+      - |
+        echo "Apps:         http://localhost:8080, :8081, :8082"
+        echo "Grafana:      http://localhost:3000 (admin/admin)"
+        echo "Prometheus:   http://localhost:9090"
+        echo "Alertmanager: http://localhost:9093"
+        echo "Pyroscope:    http://localhost:4040"
+
+  db:
+    desc: Open PostgreSQL shell
+    cmds:
+      - docker-compose exec postgres psql -U postgres
+
+  redis:
+    desc: Open Redis CLI
+    cmds:
+      - docker-compose exec redis redis-cli
+
+  clean:
+    desc: Stop services, remove volumes and images
+    cmds:
+      - docker-compose down -v --rmi local

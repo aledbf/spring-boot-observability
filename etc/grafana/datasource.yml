@@ -74,3 +74,18 @@ datasources:
           url: $${__value.raw}
     readOnly: false
     editable: true
+  - uid: pyroscope
+    orgId: 1
+    name: Pyroscope
+    type: grafana-pyroscope-datasource
+    typeName: Pyroscope
+    access: proxy
+    url: http://pyroscope:4040
+    password: ''
+    user: ''
+    database: ''
+    basicAuth: false
+    isDefault: false
+    jsonData: {}
+    readOnly: false
+    editable: true

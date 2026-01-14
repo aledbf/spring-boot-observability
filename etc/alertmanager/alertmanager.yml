@@ -1,0 +1,56 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity', 'application']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+  routes:
+    # Critical alerts go to critical channel
+    - match:
+        severity: critical
+      receiver: 'critical'
+      continue: true
+
+    # Payment team alerts
+    - match:
+        team: payments
+      receiver: 'payments-team'
+
+    # Platform team alerts
+    - match:
+        team: platform
+      receiver: 'platform-team'
+
+receivers:
+  - name: 'default'
+    # Default receiver - logs to stdout in demo mode
+    webhook_configs:
+      - url: 'http://localhost:9999/webhook'
+        send_resolved: true
+
+  - name: 'critical'
+    # In production, configure PagerDuty, Slack, etc.
+    webhook_configs:
+      - url: 'http://localhost:9999/webhook/critical'
+        send_resolved: true
+
+  - name: 'payments-team'
+    webhook_configs:
+      - url: 'http://localhost:9999/webhook/payments'
+        send_resolved: true
+
+  - name: 'platform-team'
+    webhook_configs:
+      - url: 'http://localhost:9999/webhook/platform'
+        send_resolved: true
+
+# Inhibition rules - suppress lower severity alerts when critical fires
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'application']

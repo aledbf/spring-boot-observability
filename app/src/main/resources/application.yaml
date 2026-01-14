@@ -1,34 +1,47 @@
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://postgres:5432/postgres}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:10}
+      minimum-idle: 2
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  cache:
+    type: redis
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+
 management:
   endpoints:
     web:
       exposure:
-        include: prometheus
+        include: prometheus,health
+  endpoint:
+    health:
+      show-details: when-authorized
   metrics:
     tags:
-      application: app
+      application: ${OTEL_SERVICE_NAME:app}
     distribution:
       percentiles-histogram:
-        http:
-          server:
-            requests: 'true'
+        http.server.requests: true
+
 logging:
   pattern:
     level: "trace_id=%mdc{trace_id} span_id=%mdc{span_id} trace_flags=%mdc{trace_flags} %p"
   level:
-    com.example.app: DEBUG
-
-spring:
-  datasource:
-    url: jdbc:postgresql://postgres:5432/postgres
-    username: postgres
-    password: postgres
-  jpa:
-    hibernate:
-      ddl-auto: update
-  cache:
-    type: redis
-  # https://stackoverflow.com/a/79180709
-  data:
-    redis:
-      host: redis
-      port: 6379
+    com.example.app: ${LOG_LEVEL:INFO}

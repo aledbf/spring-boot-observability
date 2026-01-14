@@ -1,0 +1,207 @@
+groups:
+  - name: service-health
+    rules:
+      # Service down - any target not responding
+      - alert: ServiceDown
+        expr: up == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }}"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/service-down.md"
+
+      # High error rate per service (5xx errors > 5%)
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[1m]))
+            /
+            sum by (job) (rate(http_server_requests_seconds_count[1m]))
+          ) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/high-error-rate.md"
+
+      # Critical error rate (> 20%)
+      - alert: CriticalErrorRate
+        expr: |
+          (
+            sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[1m]))
+            /
+            sum by (job) (rate(http_server_requests_seconds_count[1m]))
+          ) > 0.20
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 20%)"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/high-error-rate.md"
+
+      # High request latency (P95 > 1s)
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, le) (rate(http_server_requests_seconds_bucket[1m]))
+          ) > 1
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High request latency on {{ $labels.job }}"
+          description: "P95 latency is {{ $value | humanizeDuration }} (threshold: 1s)"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/high-latency.md"
+
+      # Very high latency (P95 > 3s)
+      - alert: CriticalRequestLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, le) (rate(http_server_requests_seconds_bucket[1m]))
+          ) > 3
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical request latency on {{ $labels.job }}"
+          description: "P95 latency is {{ $value | humanizeDuration }} (threshold: 3s)"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/high-latency.md"
+
+  - name: endpoint-health
+    rules:
+      # High error rate on specific endpoint
+      - alert: EndpointHighErrorRate
+        expr: |
+          (
+            sum by (job, uri) (rate(http_server_requests_seconds_count{status=~"5.."}[1m]))
+            /
+            sum by (job, uri) (rate(http_server_requests_seconds_count[1m]))
+          ) > 0.10
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High error rate on {{ $labels.job }}{{ $labels.uri }}"
+          description: "Endpoint error rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      # Endpoint latency high
+      - alert: EndpointHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, uri, le) (rate(http_server_requests_seconds_bucket[1m]))
+          ) > 2
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High latency on {{ $labels.job }}{{ $labels.uri }}"
+          description: "P95 latency is {{ $value | humanizeDuration }} (threshold: 2s)"
+
+  - name: infrastructure
+    rules:
+      # Database connection pool > 80%
+      - alert: DatabaseConnectionPoolHigh
+        expr: |
+          (hikaricp_connections_active / hikaricp_connections_max) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Database connection pool high on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of connections in use"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/db-connection-pool.md"
+
+      # Database connection pool exhausted (> 95%)
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          (hikaricp_connections_active / hikaricp_connections_max) > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Database connection pool exhausted on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of connections in use"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/db-connection-pool.md"
+
+      # JVM heap usage high (> 80%)
+      - alert: JVMHeapUsageHigh
+        expr: |
+          (jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"}) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High JVM heap usage on {{ $labels.job }}"
+          description: "Heap usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/jvm-heap-high.md"
+
+      # JVM heap critical (> 95%)
+      - alert: JVMHeapCritical
+        expr: |
+          (jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"}) > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical JVM heap usage on {{ $labels.job }}"
+          description: "Heap usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/your-org/runbooks/blob/main/jvm-heap-high.md"
+
+  - name: fleet-health
+    rules:
+      # Fleet-wide error rate
+      - alert: FleetHighErrorRate
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{status=~"5.."}[1m]))
+            /
+            sum(rate(http_server_requests_seconds_count[1m]))
+          ) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Fleet-wide high error rate"
+          description: "Overall error rate is {{ $value | humanizePercentage }} across all services"
+
+      # Multiple services down
+      - alert: MultipleServicesDown
+        expr: count(up == 0) > 1
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Multiple services are down"
+          description: "{{ $value }} services are not responding"
+
+      # Low request rate (possible outage)
+      - alert: LowTrafficAnomaly
+        expr: |
+          sum(rate(http_server_requests_seconds_count[5m])) < 0.1
+          and
+          sum(rate(http_server_requests_seconds_count[5m] offset 1h)) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Abnormally low traffic detected"
+          description: "Current traffic is near zero but was active an hour ago"
