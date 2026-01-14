@@ -1,82 +1,137 @@
 # Spring Boot with Observability
 
-Observe the Spring Boot application with three pillars of observability on [Grafana](https://github.com/grafana/grafana):
+Complete observability stack for Spring Boot applications on [Grafana](https://github.com/grafana/grafana):
 
-1. Traces with [Tempo](https://github.com/grafana/tempo) and [OpenTelemetry Instrumentation for Java](https://github.com/open-telemetry/opentelemetry-java-instrumentation)
-2. Metrics with [Prometheus](https://prometheus.io/), [Spring Boot Actuator](https://docs.spring.io/spring-boot/docs/current/actuator-api/htmlsingle/), and [Micrometer](https://micrometer.io/)
-3. Logs with [Loki](https://github.com/grafana/loki) and [Logback](https://logback.qos.ch/)
+1. **Traces** with [Tempo](https://github.com/grafana/tempo) and [OpenTelemetry](https://github.com/open-telemetry/opentelemetry-java-instrumentation)
+2. **Metrics** with [Prometheus](https://prometheus.io/) and [Micrometer](https://micrometer.io/)
+3. **Logs** with [Loki](https://github.com/grafana/loki)
+4. **Profiling** with [Pyroscope](https://github.com/grafana/pyroscope)
+5. **Alerting** with [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) and runbooks
+6. **Load Testing** with [k6](https://k6.io/)
+
+> **See [docs/OBSERVABILITY-GUIDE.md](./docs/OBSERVABILITY-GUIDE.md) for a practical usage guide.**
 
 ![Observability Architecture](./images/observability-arch.jpg)
 
-This demo project is a Spring Boot version of [FastAPI with Observability](https://github.com/blueswen/fastapi-observability) and is also inspired by [Cloud Observability with Grafana and Spring Boot](https://github.com/qaware/cloud-observability-grafana-spring-boot).
+Based on [FastAPI with Observability](https://github.com/blueswen/fastapi-observability) and [Cloud Observability with Grafana and Spring Boot](https://github.com/qaware/cloud-observability-grafana-spring-boot).
 
 ## Table of contents
 
-- [Spring Boot with Observability](#spring-boot-with-observability)
-  - [Table of contents](#table-of-contents)
-  - [Quick Start](#quick-start)
-  - [Explore with Grafana](#explore-with-grafana)
-    - [Metrics to Traces](#metrics-to-traces)
-    - [Traces to Logs](#traces-to-logs)
-    - [Logs to Traces](#logs-to-traces)
-  - [Detail](#detail)
-    - [Spring Boot Application](#spring-boot-application)
-      - [OpenTelemetry Instrumentation](#opentelemetry-instrumentation)
-      - [Logs](#logs)
-      - [Traces](#traces)
-      - [Metrics](#metrics)
-        - [Metrics with Exemplar](#metrics-with-exemplar)
-    - [Prometheus - Metrics](#prometheus---metrics)
-      - [Prometheus Config](#prometheus-config)
-      - [Grafana Data Source](#grafana-data-source)
-    - [Tempo - Traces](#tempo---traces)
-      - [Grafana Data Source](#grafana-data-source-1)
-    - [Loki - Logs](#loki---logs)
-      - [Loki Docker Driver](#loki-docker-driver)
-      - [Grafana Data Source](#grafana-data-source-2)
-    - [Grafana](#grafana)
-  - [Reference](#reference)
+- [Quick Start](#quick-start)
+- [Alerting and Runbooks](#alerting-and-runbooks)
+- [Load Testing with k6](#load-testing-with-k6)
+- [Profiling with Pyroscope](#profiling-with-pyroscope)
+- [Explore with Grafana](#explore-with-grafana)
+- [Detail](#detail)
+  - [Spring Boot Application](#spring-boot-application)
+  - [Prometheus - Metrics](#prometheus---metrics)
+  - [Tempo - Traces](#tempo---traces)
+  - [Loki - Logs](#loki---logs)
+  - [Grafana](#grafana)
+- [Reference](#reference)
 
 ## Quick Start
 
 1. Install [Loki Docker Driver](https://grafana.com/docs/loki/latest/clients/docker-driver/)
 
    ```bash
-   docker plugin install grafana/loki-docker-driver:2.9.2 --alias loki --grant-all-permissions
+   docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
    ```
 
-2. Start all services with docker compose
+2. Start all services
 
    ```bash
-   docker compose up -d
+   task up -- --build
    ```
 
-3. Send requests with [siege](https://linux.die.net/man/1/siege) and curl to the Spring Boot app
+3. Generate load with k6
 
    ```bash
-   bash request-script.sh
-   bash trace.sh
+   task test
    ```
 
-   Or you can send requests with [k6](https://k6.io/):
+4. Explore in Grafana at [http://localhost:3000](http://localhost:3000) (admin/admin)
+
+   - **Fleet Overview** - Health of all services at a glance
+   - **Business Routes** - Endpoint-level metrics
+   - **Spring Boot Observability** - Detailed application metrics
+
+5. Check alerts
 
    ```bash
-   k6 run --vus 3 --duration 300s k6-script.js
+   task alerts
    ```
 
-   Or send requests from applications' Swagger UI:
+### Available Commands
 
-    - app-a: [http://localhost:8080/swagger-ui/index.html](http://localhost:8080/swagger-ui/index.html)
-    - app-b: [http://localhost:8081/swagger-ui/index.html](http://localhost:8081/swagger-ui/index.html)
-    - app-c: [http://localhost:8082/swagger-ui/index.html](http://localhost:8082/swagger-ui/index.html)
+| Command | Description |
+|---------|-------------|
+| `task up` | Start services |
+| `task up -- --build` | Build and start |
+| `task down` | Stop services |
+| `task logs` | View logs |
+| `task test` | Run load test |
+| `task alerts` | Show active alerts |
+| `task urls` | Show all URLs |
+| `task clean` | Stop and remove volumes |
 
-4. Check predefined dashboard ```Spring Boot Observability``` on Grafana [http://localhost:3000/](http://localhost:3000/) and login with default account ```admin``` and password ```admin```
+### Service URLs
 
-   Dashboard screenshot:
+| Service | URL |
+|---------|-----|
+| App A | http://localhost:8080 |
+| App B | http://localhost:8081 |
+| App C | http://localhost:8082 |
+| Grafana | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
+| Pyroscope | http://localhost:4040 |
 
-   ![Spring Boot Monitoring Dashboard](./images/dashboard.png)
+## Alerting and Runbooks
 
-   The dashboard is also available on [Grafana Dashboards](https://grafana.com/grafana/dashboards/17175).
+Alerts are defined in `etc/prometheus/rules/alerts.yml` with corresponding runbooks in `runbooks/`.
+
+### How it works
+
+1. **Metric** - Spring Boot Actuator exposes it automatically
+2. **Alert rule** - Prometheus evaluates thresholds
+3. **Runbook** - Documents investigation and resolution steps
+
+### Example alert
+
+```yaml
+- alert: HighErrorRate
+  expr: |
+    (sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[1m]))
+    / sum by (job) (rate(http_server_requests_seconds_count[1m]))) > 0.05
+  for: 1m
+  annotations:
+    summary: "High error rate on {{ $labels.job }}"
+    runbook_url: "https://github.com/your-org/repo/blob/main/runbooks/high-error-rate.md"
+```
+
+See [runbooks/](./runbooks/) for examples and [Prometheus Operator Runbooks](https://runbooks.prometheus-operator.dev/) for reference.
+
+## Load Testing with k6
+
+```bash
+# Default test (5 VUs, 30s)
+task test
+
+# Custom parameters
+task test -- --vus 20 --duration 60s
+```
+
+The script `k6-script.js` hits all endpoints and tracks custom metrics. See [k6 documentation](https://grafana.com/docs/k6/latest/).
+
+## Profiling with Pyroscope
+
+Continuous profiling for CPU, memory, and lock contention analysis.
+
+- **Direct UI**: http://localhost:4040
+- **Via Grafana**: Explore → Pyroscope datasource
+
+See [Pyroscope Java examples](https://github.com/grafana/pyroscope/tree/main/examples/language-sdk-instrumentation/java/rideshare).
 
 ## Explore with Grafana
 
@@ -535,6 +590,8 @@ grafana:
 ## Reference
 
 1. [Cloud Observability with Grafana and Spring Boot](https://github.com/qaware/cloud-observability-grafana-spring-boot)
-2. [Exemplars support for Prometheus Histogram](https://github.com/micrometer-metrics/micrometer/issues/2812)
-3. [OpenTelemetry SDK Autoconfigure](https://github.com/open-telemetry/opentelemetry-java/blob/main/sdk-extensions/autoconfigure/README.md)
-4. [Java system properties and environment variables](https://stackoverflow.com/questions/7054972/java-system-properties-and-environment-variables)
+2. [OpenTelemetry Java Instrumentation](https://opentelemetry.io/docs/zero-code/java/agent/)
+3. [Grafana k6 Documentation](https://grafana.com/docs/k6/latest/)
+4. [Grafana Pyroscope](https://grafana.com/products/cloud/profiles/)
+5. [Prometheus Operator Runbooks](https://runbooks.prometheus-operator.dev/)
+6. [Alertmanager Configuration](https://prometheus.io/docs/alerting/latest/configuration/)
