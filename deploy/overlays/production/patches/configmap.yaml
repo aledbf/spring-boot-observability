@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: peanuts-app-config
+data:
+  SPRING_PROFILES_ACTIVE: "production"
+  LOG_LEVEL: "WARN"
+  REDIS_HOST: "redis.peanuts-production.svc.cluster.local"

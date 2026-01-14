@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: peanuts-app
+  annotations:
+    # Production-specific annotations
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+spec:
+  rules:
+    - host: peanuts.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: peanuts-app
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - peanuts.example.com
+      secretName: peanuts-app-tls-production

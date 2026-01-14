@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: peanuts-app-config
+  labels:
+    app: peanuts-app
+data:
+  SPRING_PROFILES_ACTIVE: "default"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  LOG_LEVEL: "INFO"

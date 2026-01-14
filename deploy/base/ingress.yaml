@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: peanuts-app
+  labels:
+    app: peanuts-app
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  rules:
+    - host: peanuts.example.com  # Patched per environment
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: peanuts-app
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - peanuts.example.com
+      secretName: peanuts-app-tls

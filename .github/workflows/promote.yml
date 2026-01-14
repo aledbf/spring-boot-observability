@@ -1,0 +1,138 @@
+# Promote Workflow
+#
+# Promotes a specific image tag from one environment to another.
+# This ensures the same image that was tested in lower environments
+# is deployed to higher environments.
+#
+# Promotion paths:
+#   - dev -> qa (automatic after successful dev deployment)
+#   - qa -> production (manual approval required)
+#
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-environment:
+        description: 'Source environment to promote from'
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+      target-environment:
+        description: 'Target environment to promote to'
+        required: true
+        type: choice
+        options:
+          - qa
+          - production
+      image-tag:
+        description: 'Specific image tag to promote (leave empty to use current tag from source)'
+        required: false
+        type: string
+
+jobs:
+  validate:
+    name: Validate Promotion
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.get-tag.outputs.tag }}
+      valid: ${{ steps.validate.outputs.valid }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate promotion path
+        id: validate
+        run: |
+          SOURCE="${{ inputs.source-environment }}"
+          TARGET="${{ inputs.target-environment }}"
+          
+          # Validate promotion path
+          if [[ "$SOURCE" == "dev" && "$TARGET" != "qa" ]]; then
+            echo "Error: dev can only be promoted to qa"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          if [[ "$SOURCE" == "qa" && "$TARGET" != "production" ]]; then
+            echo "Error: qa can only be promoted to production"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          if [[ "$SOURCE" == "production" ]]; then
+            echo "Error: Cannot promote from production"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "Valid promotion: $SOURCE -> $TARGET"
+          echo "valid=true" >> $GITHUB_OUTPUT
+
+      - name: Get image tag from source environment
+        id: get-tag
+        run: |
+          if [[ -n "${{ inputs.image-tag }}" ]]; then
+            TAG="${{ inputs.image-tag }}"
+            echo "Using specified image tag: $TAG"
+          else
+            # Get current tag from source environment
+            TAG=$(grep 'newTag:' deploy/overlays/${{ inputs.source-environment }}/kustomization.yaml | awk '{print $2}')
+            echo "Using current tag from ${{ inputs.source-environment }}: $TAG"
+          fi
+          
+          if [[ -z "$TAG" || "$TAG" == "latest" ]]; then
+            echo "Error: Could not determine image tag to promote"
+            exit 1
+          fi
+          
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Show promotion summary
+        run: |
+          echo "## Promotion Request" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Source | ${{ inputs.source-environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | ${{ inputs.target-environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | ${{ steps.get-tag.outputs.tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Requested By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+  promote:
+    name: Promote to ${{ inputs.target-environment }}
+    needs: validate
+    if: needs.validate.outputs.valid == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ inputs.target-environment }}
+      image-tag: ${{ needs.validate.outputs.image-tag }}
+    secrets: inherit
+
+  notify:
+    name: Notify
+    needs: [validate, promote]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Promotion succeeded
+        if: needs.promote.result == 'success'
+        run: |
+          echo "## Promotion Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Successfully promoted **${{ needs.validate.outputs.image-tag }}** from **${{ inputs.source-environment }}** to **${{ inputs.target-environment }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment URL:** ${{ needs.promote.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Promotion failed
+        if: needs.promote.result == 'failure'
+        run: |
+          echo "## Promotion Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Failed to promote **${{ needs.validate.outputs.image-tag }}** from **${{ inputs.source-environment }}** to **${{ inputs.target-environment }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please check the workflow logs for details." >> $GITHUB_STEP_SUMMARY

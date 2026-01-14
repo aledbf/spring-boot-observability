@@ -1,0 +1,87 @@
+# ArgoCD ApplicationSet for Peanuts App
+#
+# This ApplicationSet manages deployments across all environments (dev, qa, production)
+# using a single template. Each environment has its own Kustomize overlay.
+#
+# Prerequisites:
+# - ArgoCD installed in the cluster
+# - Cluster secrets configured for each environment
+# - GitHub repository access configured
+#
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: peanuts-app
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - env: dev
+            cluster: dev-cluster
+            clusterUrl: https://dev-cluster.example.com
+            autoSync: true
+            selfHeal: true
+            prune: true
+          - env: qa
+            cluster: qa-cluster
+            clusterUrl: https://qa-cluster.example.com
+            autoSync: true
+            selfHeal: true
+            prune: true
+          - env: production
+            cluster: production-cluster
+            clusterUrl: https://production-cluster.example.com
+            autoSync: false  # Manual sync for production
+            selfHeal: false
+            prune: false
+
+  template:
+    metadata:
+      name: "peanuts-app-{{env}}"
+      namespace: argocd
+      labels:
+        app: peanuts-app
+        environment: "{{env}}"
+      annotations:
+        # Notifications configuration
+        notifications.argoproj.io/subscribe.on-sync-succeeded.slack: deployments
+        notifications.argoproj.io/subscribe.on-sync-failed.slack: deployments
+        notifications.argoproj.io/subscribe.on-health-degraded.slack: deployments
+    spec:
+      project: default
+
+      source:
+        repoURL: https://github.com/OWNER/spring-boot-observability.git
+        targetRevision: HEAD
+        path: deploy/overlays/{{env}}
+
+      destination:
+        server: "{{clusterUrl}}"
+        namespace: peanuts-{{env}}
+
+      syncPolicy:
+        automated:
+          prune: "{{prune}}"
+          selfHeal: "{{selfHeal}}"
+          allowEmpty: false
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - PruneLast=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+
+      # Health checks
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas  # Ignore replica count (managed by HPA)
+
+      revisionHistoryLimit: 10

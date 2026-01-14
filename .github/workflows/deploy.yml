@@ -1,0 +1,188 @@
+# Reusable Deploy Workflow
+#
+# This workflow deploys the application to a specified environment by:
+# 1. Updating the image tag in the Kustomize overlay
+# 2. Committing the change to trigger ArgoCD sync
+#
+# Usage:
+#   jobs:
+#     deploy-dev:
+#       uses: ./.github/workflows/deploy.yml
+#       with:
+#         environment: dev
+#         image-tag: ${{ needs.build.outputs.image-tag }}
+#       secrets: inherit
+#
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment (dev, qa, production)'
+        required: true
+        type: string
+      image-tag:
+        description: 'Docker image tag to deploy'
+        required: true
+        type: string
+      dry-run:
+        description: 'If true, only show what would be deployed without making changes'
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      deployed-tag:
+        description: 'The image tag that was deployed'
+        value: ${{ jobs.deploy.outputs.deployed-tag }}
+      deployment-url:
+        description: 'URL of the deployed application'
+        value: ${{ jobs.deploy.outputs.deployment-url }}
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.get-url.outputs.url }}
+
+    outputs:
+      deployed-tag: ${{ inputs.image-tag }}
+      deployment-url: ${{ steps.get-url.outputs.url }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Validate environment
+        run: |
+          if [[ ! "${{ inputs.environment }}" =~ ^(dev|qa|production)$ ]]; then
+            echo "Error: Invalid environment '${{ inputs.environment }}'"
+            echo "Valid environments: dev, qa, production"
+            exit 1
+          fi
+          echo "Deploying to environment: ${{ inputs.environment }}"
+
+      - name: Validate image tag
+        run: |
+          if [[ -z "${{ inputs.image-tag }}" ]]; then
+            echo "Error: Image tag is required"
+            exit 1
+          fi
+          echo "Deploying image tag: ${{ inputs.image-tag }}"
+
+      - name: Get deployment URL
+        id: get-url
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)
+              echo "url=https://peanuts-dev.example.com" >> $GITHUB_OUTPUT
+              ;;
+            qa)
+              echo "url=https://peanuts-qa.example.com" >> $GITHUB_OUTPUT
+              ;;
+            production)
+              echo "url=https://peanuts.example.com" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Get previous image tag
+        id: previous-tag
+        run: |
+          PREVIOUS_TAG=$(grep 'newTag:' deploy/overlays/${{ inputs.environment }}/kustomization.yaml | awk '{print $2}')
+          echo "tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREVIOUS_TAG"
+
+      - name: Update image tag in Kustomization
+        if: ${{ !inputs.dry-run }}
+        run: |
+          cd deploy/overlays/${{ inputs.environment }}
+          
+          # Update the image tag
+          sed -i "s/newTag: .*/newTag: ${{ inputs.image-tag }}/" kustomization.yaml
+          
+          # Verify the change
+          echo "Updated kustomization.yaml:"
+          cat kustomization.yaml
+
+      - name: Validate Kustomize build
+        run: |
+          # Install kustomize if not available
+          if ! command -v kustomize &> /dev/null; then
+            curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+            sudo mv kustomize /usr/local/bin/
+          fi
+          
+          # Validate the kustomization
+          echo "Validating Kustomize build for ${{ inputs.environment }}..."
+          kustomize build deploy/overlays/${{ inputs.environment }} > /dev/null
+          echo "Kustomize build validated successfully"
+
+      - name: Dry run summary
+        if: ${{ inputs.dry-run }}
+        run: |
+          echo "## Dry Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Current Tag:** ${{ steps.previous-tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**New Tag:** ${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No changes were made (dry run mode)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit and push changes
+        if: ${{ !inputs.dry-run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add deploy/overlays/${{ inputs.environment }}/kustomization.yaml
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit - image tag is already ${{ inputs.image-tag }}"
+            exit 0
+          fi
+          
+          git commit -m "deploy(${{ inputs.environment }}): update image to ${{ inputs.image-tag }}
+
+          Deployed by: ${{ github.actor }}
+          Workflow: ${{ github.workflow }}
+          Run ID: ${{ github.run_id }}
+          Previous tag: ${{ steps.previous-tag.outputs.tag }}"
+          
+          git push
+
+      - name: Wait for ArgoCD sync
+        if: ${{ !inputs.dry-run && inputs.environment != 'production' }}
+        run: |
+          echo "Waiting for ArgoCD to detect and sync changes..."
+          echo "ArgoCD will automatically sync for ${{ inputs.environment }} environment"
+          # In a real setup, you might poll ArgoCD API or use argocd CLI
+          sleep 10
+
+      - name: Create deployment record
+        if: ${{ !inputs.dry-run }}
+        run: |
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** ${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Previous Tag:** ${{ steps.previous-tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed By:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment URL:** ${{ steps.get-url.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ArgoCD will sync the changes automatically (non-production) or manually (production)." >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "## Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** ${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please check the logs for more details." >> $GITHUB_STEP_SUMMARY

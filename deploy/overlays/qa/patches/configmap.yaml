@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: peanuts-app-config
+data:
+  SPRING_PROFILES_ACTIVE: "qa"
+  LOG_LEVEL: "INFO"
+  REDIS_HOST: "redis.peanuts-qa.svc.cluster.local"

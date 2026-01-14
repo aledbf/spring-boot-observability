@@ -1,0 +1,191 @@
+# Rollback Workflow
+#
+# Rolls back a deployment to a previous image tag.
+# Supports both manual rollback and viewing deployment history.
+#
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - production
+      target-tag:
+        description: 'Image tag to rollback to (leave empty to see recent tags)'
+        required: false
+        type: string
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+
+jobs:
+  get-history:
+    name: Get Deployment History
+    runs-on: ubuntu-latest
+    outputs:
+      previous-tags: ${{ steps.history.outputs.tags }}
+      current-tag: ${{ steps.current.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50  # Get enough history to find previous deployments
+
+      - name: Get current tag
+        id: current
+        run: |
+          TAG=$(grep 'newTag:' deploy/overlays/${{ inputs.environment }}/kustomization.yaml | awk '{print $2}')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Current tag: $TAG"
+
+      - name: Get deployment history
+        id: history
+        run: |
+          echo "## Recent Deployments for ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get last 10 deployments from git history
+          echo "| Commit | Tag | Date | Author |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----|------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          TAGS=""
+          while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+              COMMIT=$(echo "$line" | cut -d'|' -f1)
+              DATE=$(echo "$line" | cut -d'|' -f2)
+              AUTHOR=$(echo "$line" | cut -d'|' -f3)
+              
+              # Get the tag from that commit
+              TAG=$(git show $COMMIT:deploy/overlays/${{ inputs.environment }}/kustomization.yaml 2>/dev/null | grep 'newTag:' | awk '{print $2}' || echo "unknown")
+              
+              if [[ "$TAG" != "unknown" && "$TAG" != "latest" ]]; then
+                echo "| \`$COMMIT\` | $TAG | $DATE | $AUTHOR |" >> $GITHUB_STEP_SUMMARY
+                TAGS="$TAGS $TAG"
+              fi
+            fi
+          done < <(git log --oneline --format="%h|%cr|%an" -- deploy/overlays/${{ inputs.environment }}/kustomization.yaml | head -10)
+          
+          # Deduplicate and format tags
+          UNIQUE_TAGS=$(echo $TAGS | tr ' ' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+          echo "tags=$UNIQUE_TAGS" >> $GITHUB_OUTPUT
+
+  validate-rollback:
+    name: Validate Rollback
+    needs: get-history
+    runs-on: ubuntu-latest
+    if: inputs.target-tag != ''
+    outputs:
+      proceed: ${{ steps.validate.outputs.proceed }}
+
+    steps:
+      - name: Validate target tag
+        id: validate
+        run: |
+          TARGET="${{ inputs.target-tag }}"
+          CURRENT="${{ needs.get-history.outputs.current-tag }}"
+          
+          if [[ "$TARGET" == "$CURRENT" ]]; then
+            echo "Error: Target tag '$TARGET' is the same as current tag"
+            echo "proceed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          if [[ -z "$TARGET" ]]; then
+            echo "Error: Target tag is required"
+            echo "proceed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "Rollback validated: $CURRENT -> $TARGET"
+          echo "proceed=true" >> $GITHUB_OUTPUT
+
+      - name: Show rollback plan
+        run: |
+          echo "## Rollback Plan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Current Tag | ${{ needs.get-history.outputs.current-tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rollback To | ${{ inputs.target-tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Reason | ${{ inputs.reason }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Requested By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+  rollback:
+    name: Rollback ${{ inputs.environment }}
+    needs: [get-history, validate-rollback]
+    if: needs.validate-rollback.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Update image tag
+        run: |
+          cd deploy/overlays/${{ inputs.environment }}
+          
+          # Store current tag for the commit message
+          CURRENT_TAG=$(grep 'newTag:' kustomization.yaml | awk '{print $2}')
+          
+          # Update to rollback tag
+          sed -i "s/newTag: .*/newTag: ${{ inputs.target-tag }}/" kustomization.yaml
+          
+          echo "Updated kustomization.yaml:"
+          cat kustomization.yaml
+
+      - name: Commit and push rollback
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add deploy/overlays/${{ inputs.environment }}/kustomization.yaml
+          
+          git commit -m "rollback(${{ inputs.environment }}): revert to ${{ inputs.target-tag }}
+
+          Rollback from: ${{ needs.get-history.outputs.current-tag }}
+          Rollback to: ${{ inputs.target-tag }}
+          Reason: ${{ inputs.reason }}
+          Requested by: ${{ github.actor }}
+          Workflow: ${{ github.workflow }}
+          Run ID: ${{ github.run_id }}"
+          
+          git push
+
+      - name: Rollback summary
+        run: |
+          echo "## Rollback Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Successfully rolled back **${{ inputs.environment }}** from **${{ needs.get-history.outputs.current-tag }}** to **${{ inputs.target-tag }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ArgoCD will sync the changes automatically (non-production) or manually (production)." >> $GITHUB_STEP_SUMMARY
+
+  show-history-only:
+    name: Show History Only
+    needs: get-history
+    if: inputs.target-tag == ''
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Display history
+        run: |
+          echo "## No Rollback Requested" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No target tag was specified. Review the deployment history above and run this workflow again with a specific tag to rollback to." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Available tags:** ${{ needs.get-history.outputs.previous-tags }}" >> $GITHUB_STEP_SUMMARY
