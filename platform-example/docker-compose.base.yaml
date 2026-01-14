@@ -1,0 +1,144 @@
+# Observability Platform - Base Infrastructure
+# This contains ONLY the observability stack, no applications
+# Services extend this with docker-compose.override.yaml
+
+x-logging: &default-logging
+  driver: loki
+  options:
+    loki-url: 'http://localhost:3100/api/prom/push'
+    loki-pipeline-stages: |
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}'
+          max_wait_time: 3s
+
+x-app-base: &app-base
+  # Base configuration all apps should extend
+  logging: *default-logging
+  deploy:
+    resources:
+      limits:
+        memory: ${APP_MEMORY_LIMIT:-512M}
+  depends_on:
+    loki:
+      condition: service_started
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    pyroscope:
+      condition: service_started
+
+services:
+  # === Logging ===
+  loki:
+    image: grafana/loki:3.5.0
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  # === Metrics ===
+  prometheus:
+    image: prom/prometheus:v3.3.1
+    ports:
+      - "9090:9090"
+    volumes:
+      # Platform rules (from this repo)
+      - ./etc/prometheus:/etc/prometheus
+      # Service-specific rules (mounted by override)
+      - ${SERVICE_ALERTS_PATH:-./observability/alerts.yml}:/etc/prometheus/rules/service.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --enable-feature=exemplar-storage
+      - --web.enable-lifecycle
+    depends_on:
+      - loki
+      - alertmanager
+    logging: *default-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./etc/alertmanager:/etc/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    depends_on:
+      - loki
+    logging: *default-logging
+
+  # === Tracing ===
+  tempo:
+    image: grafana/tempo:2.7.2
+    command:
+      - -config.file=/etc/tempo.yml
+      - --target=all
+      - --storage.trace.backend=local
+      - --storage.trace.local.path=/var/tempo
+      - --auth.enabled=false
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+    volumes:
+      - ./etc/tempo.yml:/etc/tempo.yml
+    depends_on:
+      - loki
+    logging: *default-logging
+
+  # === Profiling ===
+  pyroscope:
+    image: grafana/pyroscope:1.10.0
+    ports:
+      - "4040:4040"
+    command:
+      - server
+    depends_on:
+      - loki
+    logging: *default-logging
+
+  # === Visualization ===
+  grafana:
+    image: grafana/grafana:12.0.1
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      # Platform datasources and base dashboards
+      - ./etc/grafana:/etc/grafana/provisioning/datasources
+      - ./etc/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./etc/dashboards:/etc/grafana/dashboards/platform
+      # Service-specific dashboards (mounted by override)
+      - ${SERVICE_DASHBOARDS_PATH:-./observability/dashboards}:/etc/grafana/dashboards/service:ro
+    depends_on:
+      - loki
+      - prometheus
+    logging: *default-logging
+
+  # === Data Stores ===
+  postgres:
+    image: postgres:17.4-alpine3.21
+    environment:
+      - POSTGRES_USER=${DATABASE_USERNAME:-postgres}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-postgres}
+      - POSTGRES_DB=${DATABASE_NAME:-postgres}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  redis:
+    image: redis:7.2.4
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging

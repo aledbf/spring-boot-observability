@@ -1,0 +1,94 @@
+# Payment Service - Custom Alert Rules
+# These are ADDITIONAL to the platform alerts, not replacements
+# Platform provides: ServiceDown, HighErrorRate, HighLatency, etc.
+# This file adds BUSINESS-SPECIFIC alerts
+
+groups:
+  - name: payment-service
+    rules:
+      # === Payment Business Alerts ===
+      
+      - alert: PaymentGatewayDegraded
+        expr: |
+          sum(rate(http_client_requests_seconds_count{
+            job="payment-service",
+            uri=~".*gateway.*",
+            status=~"5.."
+          }[5m])) 
+          / 
+          sum(rate(http_client_requests_seconds_count{
+            job="payment-service",
+            uri=~".*gateway.*"
+          }[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          team: payments
+          runbook: payment-gateway-degraded
+        annotations:
+          summary: "Payment gateway error rate > 10%"
+          description: "{{ $value | humanizePercentage }} of payment gateway calls are failing"
+          dashboard: "d/payments/payment-service?orgId=1"
+
+      - alert: PaymentProcessingBacklog
+        expr: |
+          sum(payment_queue_size{job="payment-service"}) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Payment processing queue backlog"
+          description: "{{ $value }} payments waiting to be processed"
+
+      - alert: PaymentSuccessRateLow
+        expr: |
+          sum(rate(payment_transactions_total{
+            job="payment-service",
+            status="success"
+          }[10m]))
+          /
+          sum(rate(payment_transactions_total{job="payment-service"}[10m])) < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Payment success rate below 95%"
+          description: "Only {{ $value | humanizePercentage }} of payments are succeeding"
+
+      - alert: HighValueTransactionFailure
+        expr: |
+          sum(rate(payment_transactions_total{
+            job="payment-service",
+            status="failed",
+            amount_tier="high"
+          }[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: payments
+          escalate: true
+        annotations:
+          summary: "High-value transaction failures detected"
+          description: "Transactions over $10,000 are failing - immediate attention required"
+
+      # === SLO-Based Alerts (generated from service.yaml) ===
+      
+      - alert: PaymentServiceErrorBudgetBurn
+        expr: |
+          sum(rate(http_server_requests_seconds_count{
+            job="payment-service",
+            status=~"5.."
+          }[1h]))
+          /
+          sum(rate(http_server_requests_seconds_count{job="payment-service"}[1h])) 
+          > (1 - 0.999) * 14.4
+        for: 5m
+        labels:
+          severity: critical
+          team: payments
+          slo: availability
+        annotations:
+          summary: "Payment service burning error budget too fast"
+          description: "At current rate, will exhaust 30-day error budget in < 2 hours"

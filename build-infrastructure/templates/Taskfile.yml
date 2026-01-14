@@ -1,0 +1,157 @@
+# Service Taskfile Template
+# Copy this to your service repo and customize
+
+version: '3'
+
+vars:
+  # Service Configuration
+  SERVICE_NAME: '{{.SERVICE_NAME | default "app"}}'
+  SERVICE_PORT: '{{.SERVICE_PORT | default "8080"}}'
+  
+  # Docker Build Image
+  BUILDER_IMAGE: ghcr.io/yourorg/java-builder:24
+  
+  # Maven settings for Nexus proxy (faster builds)
+  MAVEN_SETTINGS: '{{.ROOT_DIR}}/build-infrastructure/nexus/nexus-settings.xml'
+  
+  # Docker run command for consistent builds
+  DOCKER_RUN: >-
+    docker run --rm -it
+    -v {{.ROOT_DIR}}:/workspace
+    -v maven-cache:/home/builder/.m2/repository
+    -w /workspace/app
+    {{.BUILDER_IMAGE}}
+
+  ROOT_DIR:
+    sh: pwd
+
+tasks:
+  default:
+    cmds: [task --list]
+
+  # === Build Commands (Docker-based for consistency) ===
+
+  build:
+    desc: Build the application (Docker-based, same as CI)
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B clean package -DskipTests"'
+
+  build:local:
+    desc: Build using local Maven (faster if JDK matches)
+    dir: app
+    cmds:
+      - ./mvnw -B clean package -DskipTests
+
+  # === Test Commands ===
+
+  test:
+    desc: Run all tests (unit + integration) in Docker
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B verify"'
+
+  test:unit:
+    desc: Run unit tests only
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B test -DskipITs"'
+
+  test:integration:
+    desc: Run integration tests only (requires Docker-in-Docker)
+    cmds:
+      - |
+        docker run --rm -it \
+          -v {{.ROOT_DIR}}:/workspace \
+          -v maven-cache:/home/builder/.m2/repository \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -w /workspace/app \
+          {{.BUILDER_IMAGE}} \
+          "mvn -B verify -DskipUTs=true"
+
+  test:local:
+    desc: Run tests using local Maven
+    dir: app
+    cmds:
+      - ./mvnw -B verify
+
+  # === Code Quality ===
+
+  check:
+    desc: Run all code quality checks
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B checkstyle:check spotbugs:check pmd:check"'
+
+  check:style:
+    desc: Run Checkstyle only
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B checkstyle:check"'
+
+  check:bugs:
+    desc: Run SpotBugs only
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B compile spotbugs:check"'
+
+  check:pmd:
+    desc: Run PMD only
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B pmd:check"'
+
+  coverage:
+    desc: Generate coverage report
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B test jacoco:report"'
+      - echo "Coverage report: app/target/site/jacoco/index.html"
+
+  # === Docker Image ===
+
+  image:build:
+    desc: Build Docker image for the service
+    dir: app
+    cmds:
+      - docker build -t {{.SERVICE_NAME}}:latest .
+
+  image:run:
+    desc: Run the Docker image locally
+    cmds:
+      - docker run --rm -p {{.SERVICE_PORT}}:8080 {{.SERVICE_NAME}}:latest
+
+  # === Development ===
+
+  dev:
+    desc: Start development environment (observability stack + hot reload)
+    cmds:
+      - task: platform:up
+      - cd app && ./mvnw spring-boot:run
+
+  # === Nexus / Maven Cache ===
+
+  nexus:start:
+    desc: Start local Nexus for faster builds
+    dir: build-infrastructure/nexus
+    cmds:
+      - docker compose up -d
+      - echo "Nexus available at http://localhost:8081 (wait ~60s for startup)"
+
+  nexus:stop:
+    desc: Stop local Nexus
+    dir: build-infrastructure/nexus
+    cmds:
+      - docker compose down
+
+  cache:warm:
+    desc: Warm Maven cache by downloading all dependencies
+    cmds:
+      - '{{.DOCKER_RUN}} "mvn -B dependency:go-offline"'
+
+  cache:clear:
+    desc: Clear Maven cache
+    cmds:
+      - docker volume rm maven-cache || true
+
+  # === CI Simulation ===
+
+  ci:
+    desc: Simulate full CI pipeline locally
+    cmds:
+      - task: build
+      - task: test
+      - task: check
+      - echo "CI simulation passed!"

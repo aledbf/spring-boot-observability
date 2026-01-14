@@ -1,0 +1,139 @@
+# Platform Alert Rules
+# These are GENERIC alerts that apply to ALL services
+# Services can add their own alerts in observability/alerts.yml
+
+groups:
+  # === Service Health ===
+  - name: service-health
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} has been unreachable for > 1 minute"
+          runbook: service-down
+
+      - alert: HighErrorRate
+        expr: |
+          sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          /
+          sum by (job) (rate(http_server_requests_seconds_count[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of requests are failing"
+          runbook: high-error-rate
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum by (job) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          /
+          sum by (job) (rate(http_server_requests_seconds_count[5m])) > 0.10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical error rate on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of requests are failing"
+          runbook: high-error-rate
+
+  # === Latency ===
+  - name: latency
+    rules:
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum by (job, le) (rate(http_server_requests_seconds_bucket[5m]))
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency on {{ $labels.job }}"
+          description: "p95 latency is {{ $value | humanizeDuration }}"
+          runbook: high-latency
+
+      - alert: CriticalRequestLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum by (job, le) (rate(http_server_requests_seconds_bucket[5m]))
+          ) > 1.0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical p95 latency on {{ $labels.job }}"
+          description: "p95 latency is {{ $value | humanizeDuration }}"
+          runbook: high-latency
+
+  # === Infrastructure ===
+  - name: infrastructure
+    rules:
+      - alert: DatabaseConnectionPoolHigh
+        expr: |
+          hikaricp_connections_active / hikaricp_connections_max > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool > 80% on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of connections in use"
+
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          hikaricp_connections_pending > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool exhausted on {{ $labels.job }}"
+          description: "{{ $value }} requests waiting for connections"
+
+      - alert: JVMHeapUsageHigh
+        expr: |
+          jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "JVM heap usage > 85% on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of heap in use"
+
+      - alert: JVMHeapUsageCritical
+        expr: |
+          jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"} > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "JVM heap usage > 95% on {{ $labels.job }}"
+          description: "{{ $value | humanizePercentage }} of heap in use - OOM imminent"
+
+  # === Fleet Health ===
+  - name: fleet-health
+    rules:
+      - alert: MultipleServicesDown
+        expr: count(up == 0) > 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Multiple services are down"
+          description: "{{ $value }} services are currently unreachable"
+
+      - alert: FleetHighErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fleet-wide error rate elevated"
+          description: "{{ $value | humanizePercentage }} of all requests failing"

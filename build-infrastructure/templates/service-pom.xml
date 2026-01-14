@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Service POM Template
+  
+  Replace the following placeholders:
+  - YOUR_GROUP_ID: Your organization's group ID (e.g., com.yourorg)
+  - YOUR_ARTIFACT_ID: Service name (e.g., payment-service)
+  - YOUR_SERVICE_NAME: Human-readable name
+  - YOUR_DESCRIPTION: Service description
+  
+  This POM inherits all configuration from the parent POM:
+  - Dependency versions
+  - Plugin configurations (Checkstyle, SpotBugs, PMD, JaCoCo)
+  - Build settings
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Inherit from organization parent POM -->
+    <parent>
+        <groupId>com.yourorg</groupId>
+        <artifactId>spring-boot-parent</artifactId>
+        <version>1.0.0</version>
+        <!-- If parent is not in Nexus yet, use relativePath -->
+        <!-- <relativePath>../build-infrastructure/parent-pom/pom.xml</relativePath> -->
+    </parent>
+
+    <groupId>YOUR_GROUP_ID</groupId>
+    <artifactId>YOUR_ARTIFACT_ID</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>YOUR_SERVICE_NAME</name>
+    <description>YOUR_DESCRIPTION</description>
+
+    <!-- 
+      Service-specific properties
+      These override parent defaults if needed
+    -->
+    <properties>
+        <!-- Override coverage threshold if needed -->
+        <!-- <jacoco.minimum.coverage>0.60</jacoco.minimum.coverage> -->
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starters - versions from parent -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- Database - uncomment if needed -->
+        <!--
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        -->
+
+        <!-- Redis Cache - uncomment if needed -->
+        <!--
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        -->
+
+        <!-- API Documentation - version from parent -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+
+        <!-- Test Dependencies - from parent -->
+        <!-- Testcontainers PostgreSQL - uncomment if using DB -->
+        <!--
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        -->
+
+        <!-- Testcontainers Redis - uncomment if using Redis -->
+        <!--
+        <dependency>
+            <groupId>com.redis</groupId>
+            <artifactId>testcontainers-redis</artifactId>
+            <scope>test</scope>
+        </dependency>
+        -->
+    </dependencies>
+
+</project>

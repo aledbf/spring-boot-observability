@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(mvn clean package:*)",
+      "Bash(docker build:*)",
+      "Bash(task urls)",
+      "Bash(task:*)",
+      "Bash(docker plugin install:*)",
+      "Bash(curl:*)",
+      "Bash(docker logs spring-boot-observability-grafana-1)",
+      "Bash(docker network inspect:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(jq:*)",
+      "Bash(docker run:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker ps:*)",
+      "Bash(git -C /Users/aledbf/Trabajo/bna/spring-boot-observability log --oneline)"
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+# Validate Observability Config
+# Runs on PRs that modify observability configs
+
+name: Validate Observability
+
+on:
+  pull_request:
+    paths:
+      - 'observability/**'
+      - 'docker-compose.override.yaml'
+      - 'service.yaml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Validate Prometheus alert rules
+        run: |
+          if [ -f observability/alerts.yml ]; then
+            docker run --rm -v $PWD/observability:/rules prom/prometheus \
+              promtool check rules /rules/alerts.yml
+          fi
+
+      - name: Validate Grafana dashboards
+        run: |
+          if [ -d observability/dashboards ]; then
+            for f in observability/dashboards/*.json; do
+              echo "Validating $f..."
+              jq empty "$f"
+            done
+          fi
+
+      - name: Validate service.yaml
+        run: |
+          if [ -f service.yaml ]; then
+            # Basic YAML validation
+            python3 -c "import yaml; yaml.safe_load(open('service.yaml'))"
+          fi
+
+      - name: Validate docker-compose
+        run: |
+          docker compose -f platform/docker-compose.base.yaml -f docker-compose.override.yaml config --quiet
+
+      - name: Test stack starts
+        run: |
+          docker compose -f platform/docker-compose.base.yaml -f docker-compose.override.yaml up -d
+          sleep 30
+          
+          # Check services are healthy
+          docker compose -f platform/docker-compose.base.yaml -f docker-compose.override.yaml ps
+          
+          # Check Prometheus can load rules
+          curl -sf http://localhost:9090/-/healthy || exit 1
+          
+          # Cleanup
+          docker compose -f platform/docker-compose.base.yaml -f docker-compose.override.yaml down -v

@@ -1,0 +1,65 @@
+# Payment Service - Taskfile
+# Includes shared platform tasks and adds service-specific ones
+
+version: '3'
+
+# Include the shared platform Taskfile
+includes:
+  # Option 1: Git submodule (recommended for enterprise)
+  platform: ./platform/Taskfile.platform.yml
+  
+  # Option 2: Remote include (Taskfile 3.x feature)
+  # platform:
+  #   taskfile: https://raw.githubusercontent.com/your-org/observability-platform/main/Taskfile.platform.yml
+  #   internal: true
+
+vars:
+  # Service-specific configuration
+  SERVICE_NAME: payment-service
+  SERVICE_PORT: 8080
+  PLATFORM_DIR: ./platform
+  
+  # Override paths for app-specific configs
+  SERVICE_ALERTS_PATH: ./observability/alerts.yml
+  SERVICE_DASHBOARDS_PATH: ./observability/dashboards
+
+tasks:
+  default:
+    cmds: [task --list]
+
+  # === Service-Specific Tasks ===
+  
+  build:
+    desc: Build the payment service
+    cmds:
+      - ./mvnw clean package -DskipTests
+      - docker compose -f {{.PLATFORM_DIR}}/docker-compose.base.yaml -f docker-compose.override.yaml build {{.SERVICE_NAME}}
+
+  dev:
+    desc: Start in development mode with hot reload
+    cmds:
+      - task: platform:up
+      - ./mvnw spring-boot:run
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - ./mvnw test
+
+  test:integration:
+    desc: Run integration tests against the stack
+    deps: [platform:up]
+    cmds:
+      - ./mvnw verify -Pintegration
+
+  # === Payment-Specific Commands ===
+  
+  simulate:failure:
+    desc: Trigger payment gateway failure for testing alerts
+    cmds:
+      - curl -X POST http://localhost:{{.SERVICE_PORT}}/admin/simulate/gateway-failure
+
+  test:payments:
+    desc: Run payment-specific load test
+    cmds:
+      - '{{.K6}} run /scripts/k6-payment-test.js'

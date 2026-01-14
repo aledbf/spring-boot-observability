@@ -1,0 +1,42 @@
+# Service Manifest
+# Metadata about this service for platform tooling
+
+name: payment-service
+team: payments
+tier: critical  # critical | standard | internal
+
+description: |
+  Handles all payment processing including card transactions,
+  refunds, and payment gateway integrations.
+
+# Owners for on-call routing
+owners:
+  - email: payments-team@example.com
+    slack: "#payments-oncall"
+
+# Dependencies for service mesh / runbook context
+dependencies:
+  - postgres
+  - redis
+  - payment-gateway  # external
+
+# SLO definitions (used to generate alerts)
+slos:
+  availability:
+    target: 99.9
+    window: 30d
+  
+  latency:
+    p95_target_ms: 500
+    p99_target_ms: 1000
+
+# Custom alert thresholds (override platform defaults)
+alerts:
+  high_error_rate_threshold: 0.01      # 1% (stricter than default 5%)
+  critical_error_rate_threshold: 0.05  # 5% (stricter than default 10%)
+  high_latency_p95_ms: 400             # Stricter than default 500ms
+
+# Port mapping
+ports:
+  http: 8080
+  management: 8081

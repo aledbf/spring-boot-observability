@@ -1,23 +1,64 @@
 version: 2
 updates:
-  - package-ecosystem: maven
+  # Maven dependencies
+  - package-ecosystem: "maven"
     directory: "/app"
     schedule:
       interval: "weekly"
-      time: '10:00'
-      timezone: Asia/Taipei
+      day: "monday"
+      time: "10:00"
+      timezone: "Asia/Taipei"
     open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "java"
+    commit-message:
+      prefix: "deps(maven)"
+    groups:
+      spring-boot:
+        patterns:
+          - "org.springframework*"
+      testing:
+        patterns:
+          - "org.testcontainers*"
+          - "org.junit*"
+          - "org.mockito*"
+      observability:
+        patterns:
+          - "io.opentelemetry*"
+          - "io.micrometer*"
+      code-quality:
+        patterns:
+          - "com.puppycrawl.tools:checkstyle"
+          - "com.github.spotbugs*"
+          - "org.jacoco*"
+
+  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-      time: '10:00'
-      timezone: Asia/Taipei
+      day: "monday"
+      time: "10:00"
+      timezone: "Asia/Taipei"
     open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(actions)"
+
+  # Docker base images
   - package-ecosystem: "docker"
     directory: "/app"
     schedule:
       interval: "weekly"
-      time: '10:00'
-      timezone: Asia/Taipei
+      day: "monday"
+      time: "10:00"
+      timezone: "Asia/Taipei"
     open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"

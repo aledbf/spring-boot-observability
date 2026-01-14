@@ -1,0 +1,49 @@
+# Prometheus Configuration for Platform
+# Designed to load both platform and service-specific rules
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: local
+    environment: development
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# Rule files - platform rules + service overrides
+rule_files:
+  - /etc/prometheus/rules/*.yml       # Platform rules (ServiceDown, HighErrorRate, etc.)
+  - /etc/prometheus/service/*.yml     # Service-specific rules (mounted from app repo)
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Scrape all services with 'prometheus.io/scrape' annotation
+  # In production, use service discovery (Kubernetes, Consul, etc.)
+  - job_name: spring-apps
+    metrics_path: /actuator/prometheus
+    # Docker Compose service discovery via DNS
+    dns_sd_configs:
+      - names:
+          - 'tasks.app'  # Will resolve all app-* services
+        type: A
+        port: 8080
+    # Or use static config for local dev
+    static_configs:
+      - targets: ['app-a:8080', 'app-b:8080', 'app-c:8080']
+        labels:
+          __meta_service: spring-boot
+
+  # File-based service discovery (recommended for multi-repo setup)
+  # Services register themselves via a shared volume or config management
+  - job_name: services
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.json
+        refresh_interval: 30s

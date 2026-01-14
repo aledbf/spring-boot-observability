@@ -1,0 +1,104 @@
+name: Build Infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'build-infrastructure/**'
+      - '.github/workflows/build-infrastructure.yml'
+  workflow_dispatch:
+    inputs:
+      jdk_version:
+        description: 'JDK Version'
+        required: true
+        default: '24'
+
+env:
+  REGISTRY: ghcr.io
+  BUILDER_IMAGE_NAME: ${{ github.repository }}/java-builder
+
+jobs:
+  build-builder-image:
+    name: Build Java Builder Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BUILDER_IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ github.event.inputs.jdk_version || '24' }}
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./build-infrastructure/docker
+          file: ./build-infrastructure/docker/Dockerfile.builder
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            JDK_VERSION=${{ github.event.inputs.jdk_version || '24' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate summary
+        run: |
+          echo "## Java Builder Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.REGISTRY }}/${{ env.BUILDER_IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**JDK Version:** ${{ github.event.inputs.jdk_version || '24' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  publish-parent-pom:
+    name: Publish Parent POM
+    runs-on: ubuntu-latest
+    needs: [build-builder-image]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '24'
+          cache: 'maven'
+
+      - name: Validate Parent POM
+        run: mvn -B validate
+        working-directory: build-infrastructure/parent-pom
+
+      # Note: Actual deployment to Nexus would require Nexus to be accessible
+      # This step is a placeholder showing how it would work
+      - name: Deploy Parent POM (dry-run)
+        run: |
+          echo "Parent POM would be deployed to Nexus with:"
+          echo "  mvn -B deploy -DskipTests"
+          echo ""
+          echo "Configure your Nexus URL in the parent-pom/pom.xml distributionManagement section"
+        working-directory: build-infrastructure/parent-pom

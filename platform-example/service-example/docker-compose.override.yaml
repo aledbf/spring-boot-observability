@@ -1,0 +1,57 @@
+# Payment Service - Docker Compose Override
+# This file ONLY contains the application service definition
+# It extends the platform's docker-compose.base.yaml
+
+services:
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # OpenTelemetry
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - OTEL_SERVICE_NAME=payment-service
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+      
+      # Pyroscope
+      - PYROSCOPE_APPLICATION_NAME=payment-service
+      - PYROSCOPE_SERVER_ADDRESS=http://pyroscope:4040
+      - PYROSCOPE_FORMAT=jfr
+      
+      # Database
+      - DATABASE_URL=jdbc:postgresql://postgres:5432/payments
+      - DATABASE_USERNAME=${DATABASE_USERNAME:-postgres}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-postgres}
+      
+      # Redis
+      - REDIS_HOST=redis
+      
+      # App-specific
+      - PAYMENT_GATEWAY_URL=${PAYMENT_GATEWAY_URL:-https://api.stripe.com}
+      - PAYMENT_GATEWAY_TIMEOUT_MS=${PAYMENT_GATEWAY_TIMEOUT_MS:-5000}
+    ports:
+      - "8080:8080"
+    logging:
+      driver: loki
+      options:
+        loki-url: 'http://localhost:3100/api/prom/push'
+    depends_on:
+      loki:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pyroscope:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Override postgres to create payments database
+  postgres:
+    environment:
+      - POSTGRES_DB=payments

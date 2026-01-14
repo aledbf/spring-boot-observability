@@ -1,0 +1,69 @@
+# Platform Update Workflow
+# Runs in SERVICE repos to keep platform submodule updated
+# Add this to each service repo's .github/workflows/
+
+name: Platform Update
+
+on:
+  schedule:
+    # Check for updates weekly
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Platform version (tag/branch/commit)'
+        required: false
+        default: 'main'
+
+jobs:
+  update-platform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update platform submodule
+        run: |
+          cd platform
+          git fetch origin
+          git checkout ${{ github.event.inputs.version || 'main' }}
+          cd ..
+          
+          if git diff --quiet platform; then
+            echo "Platform is already up to date"
+            echo "UPDATED=false" >> $GITHUB_ENV
+          else
+            echo "Platform has updates"
+            echo "UPDATED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Validate alerts
+        if: env.UPDATED == 'true'
+        run: |
+          docker run --rm -v $PWD/observability:/rules prom/prometheus \
+            promtool check rules /rules/alerts.yml || true
+
+      - name: Create Pull Request
+        if: env.UPDATED == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: update observability platform'
+          title: 'Update observability platform'
+          body: |
+            Automated update of the observability platform submodule.
+            
+            ## Changes
+            See [platform changelog](https://github.com/your-org/observability-platform/releases)
+            
+            ## Checklist
+            - [ ] Review platform release notes
+            - [ ] Test locally with `task platform:up`
+            - [ ] Verify dashboards load correctly
+            - [ ] Check alerts are firing correctly
+          branch: platform-update
+          labels: |
+            dependencies
+            observability

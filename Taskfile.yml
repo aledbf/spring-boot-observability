@@ -1,13 +1,30 @@
 version: '3'
 
 vars:
+  # Load testing
   K6: docker run --rm -i --add-host=host.docker.internal:host-gateway -v {{.ROOT_DIR}}:/scripts grafana/k6:latest
+  
+  # Java build environment (consistent version everywhere)
+  JDK_VERSION: '24'
+  BUILDER_IMAGE: eclipse-temurin:{{.JDK_VERSION}}-jdk-alpine
+  
+  # Docker run command for consistent builds
+  DOCKER_MVN: >-
+    docker run --rm
+    -v {{.ROOT_DIR}}:/workspace
+    -v maven-cache:/root/.m2/repository
+    -w /workspace/app
+    {{.BUILDER_IMAGE}}
+    sh -c
+
   ROOT_DIR:
     sh: pwd
 
 tasks:
   default:
     cmds: [task --list]
+
+  # === Observability Stack ===
 
   up:
     desc: Start all services (add --build to rebuild)
@@ -29,10 +46,149 @@ tasks:
     cmds:
       - docker-compose ps
 
-  test:
-    desc: Run load test (e.g., task test -- --vus 20 --duration 60s)
+  # === Build Commands (Docker-based for consistency) ===
+
+  build:
+    desc: Build app using Docker (same JDK as CI)
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B clean package -DskipTests"'
+
+  build:local:
+    desc: Build using local Maven (faster if JDK matches)
+    dir: app
+    cmds:
+      - ./mvnw -B clean package -DskipTests
+
+  # === Test Commands ===
+
+  test:unit:
+    desc: Run unit tests in Docker
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B test -DskipITs"'
+
+  test:integration:
+    desc: Run integration tests (requires Docker socket)
+    cmds:
+      - |
+        docker run --rm \
+          -v {{.ROOT_DIR}}:/workspace \
+          -v maven-cache:/root/.m2/repository \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -w /workspace/app \
+          {{.BUILDER_IMAGE}} \
+          sh -c "./mvnw -B verify -DskipUTs=true"
+
+  test:all:
+    desc: Run all tests in Docker
+    cmds:
+      - |
+        docker run --rm \
+          -v {{.ROOT_DIR}}:/workspace \
+          -v maven-cache:/root/.m2/repository \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -w /workspace/app \
+          {{.BUILDER_IMAGE}} \
+          sh -c "./mvnw -B verify"
+
+  test:local:
+    desc: Run tests using local Maven
+    dir: app
+    cmds:
+      - ./mvnw -B verify
+
+  # === Code Quality ===
+
+  check:
+    desc: Run all code quality checks in Docker
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B compile checkstyle:check pmd:check"'
+      # Note: SpotBugs disabled until it supports Java 24 (class file version 68)
+      # - '{{.DOCKER_MVN}} "./mvnw -B spotbugs:check"'
+
+  check:style:
+    desc: Run Checkstyle only
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B checkstyle:check"'
+
+  check:bugs:
+    desc: Run SpotBugs only
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B compile spotbugs:check"'
+
+  check:pmd:
+    desc: Run PMD only
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B pmd:check"'
+
+  coverage:
+    desc: Generate and view coverage report
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B test jacoco:report"'
+      - cmd: echo "Coverage report at app/target/site/jacoco/index.html"
+
+  # === CI Simulation ===
+
+  ci:
+    desc: Simulate full CI pipeline locally
+    cmds:
+      - task: build
+      - task: test:all
+      - task: check
+      - cmd: echo "CI simulation passed!"
+
+  # === Load Testing ===
+
+  test:load:
+    desc: Run k6 load test (e.g., task test:load -- --vus 20 --duration 60s)
     cmds:
       - '{{.K6}} run {{.CLI_ARGS}} /scripts/k6-script.js'
+
+  # === Database & Cache ===
+
+  db:
+    desc: Open PostgreSQL shell
+    cmds:
+      - docker-compose exec postgres psql -U postgres
+
+  redis:
+    desc: Open Redis CLI
+    cmds:
+      - docker-compose exec redis redis-cli
+
+  # === Nexus (Local Maven Proxy) ===
+
+  nexus:up:
+    desc: Start Nexus for faster builds
+    dir: build-infrastructure/nexus
+    cmds:
+      - docker compose up -d
+      - cmd: echo "Nexus starting at http://localhost:8081 (wait ~60s)"
+
+  nexus:down:
+    desc: Stop Nexus
+    dir: build-infrastructure/nexus
+    cmds:
+      - docker compose down
+
+  nexus:logs:
+    desc: Show Nexus logs
+    cmds:
+      - docker logs -f nexus
+
+  # === Maven Cache ===
+
+  cache:warm:
+    desc: Download all dependencies to cache
+    cmds:
+      - '{{.DOCKER_MVN}} "./mvnw -B dependency:go-offline"'
+
+  cache:clear:
+    desc: Clear Maven cache volume
+    cmds:
+      - docker volume rm maven-cache || true
+      - cmd: echo "Maven cache cleared"
+
+  # === Utilities ===
 
   alerts:
     desc: Show firing alerts
@@ -48,16 +204,7 @@ tasks:
         echo "Prometheus:   http://localhost:9090"
         echo "Alertmanager: http://localhost:9093"
         echo "Pyroscope:    http://localhost:4040"
-
-  db:
-    desc: Open PostgreSQL shell
-    cmds:
-      - docker-compose exec postgres psql -U postgres
-
-  redis:
-    desc: Open Redis CLI
-    cmds:
-      - docker-compose exec redis redis-cli
+        echo "Nexus:        http://localhost:8081 (if running)"
 
   clean:
     desc: Stop services, remove volumes and images

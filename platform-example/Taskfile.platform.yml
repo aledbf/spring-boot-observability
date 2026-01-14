@@ -1,0 +1,120 @@
+# Observability Platform - Shared Taskfile
+# This file lives in the observability-platform repo
+# Services include it via: includes: { platform: ./platform/Taskfile.yml }
+
+version: '3'
+
+vars:
+  K6: docker run --rm -i --add-host=host.docker.internal:host-gateway -v {{.ROOT_DIR}}:/scripts grafana/k6:latest
+  ROOT_DIR:
+    sh: pwd
+  # These can be overridden by the service's Taskfile
+  SERVICE_NAME: '{{.SERVICE_NAME | default "app"}}'
+  SERVICE_PORT: '{{.SERVICE_PORT | default "8080"}}'
+  COMPOSE_FILES: '-f {{.PLATFORM_DIR}}/docker-compose.base.yaml -f docker-compose.override.yaml'
+
+tasks:
+  # === Core Lifecycle ===
+  
+  up:
+    desc: Start observability stack + app (add --build to rebuild)
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} up -d {{.CLI_ARGS}}
+    
+  down:
+    desc: Stop all services (add -v to remove volumes)
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} down {{.CLI_ARGS}}
+
+  restart:
+    desc: Restart app service only (faster iteration)
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} restart {{.SERVICE_NAME}}
+
+  logs:
+    desc: Show logs (e.g., task logs -- app prometheus)
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} logs -f {{.CLI_ARGS}}
+
+  ps:
+    desc: Show running services
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} ps
+
+  # === Observability ===
+  
+  alerts:
+    desc: Show firing alerts
+    cmds:
+      - 'curl -s http://localhost:9090/api/v1/alerts | jq -r ''.data.alerts[] | "\(.labels.alertname) [\(.state)] - \(.labels.job // "fleet")"'''
+
+  urls:
+    desc: Show URLs for all services
+    cmds:
+      - |
+        echo "Application:  http://localhost:{{.SERVICE_PORT}}"
+        echo "Grafana:      http://localhost:3000 (admin/admin)"
+        echo "Prometheus:   http://localhost:9090"
+        echo "Alertmanager: http://localhost:9093"
+        echo "Tempo:        http://localhost:4317 (OTLP gRPC)"
+        echo "Pyroscope:    http://localhost:4040"
+        echo "Loki:         http://localhost:3100"
+
+  # === Testing ===
+  
+  test:
+    desc: Run load test (e.g., task test -- --vus 20 --duration 60s)
+    cmds:
+      - '{{.K6}} run {{.CLI_ARGS}} /scripts/k6-script.js'
+
+  test:smoke:
+    desc: Quick smoke test (5 VUs, 30s)
+    cmds:
+      - '{{.K6}} run --vus 5 --duration 30s /scripts/k6-script.js'
+
+  # === Database ===
+  
+  db:
+    desc: Open PostgreSQL shell
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} exec postgres psql -U postgres
+
+  redis:
+    desc: Open Redis CLI
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} exec redis redis-cli
+
+  # === Cleanup ===
+  
+  clean:
+    desc: Stop services, remove volumes and images
+    cmds:
+      - docker compose {{.COMPOSE_FILES}} down -v --rmi local
+
+  # === Sync ===
+  
+  platform:update:
+    desc: Update platform submodule to latest
+    cmds:
+      - git submodule update --remote platform
+      - echo "Platform updated. Review changes with: git diff platform"
+
+  # === Validation ===
+  
+  validate:alerts:
+    desc: Validate Prometheus alert rules
+    cmds:
+      - docker run --rm -v {{.ROOT_DIR}}/observability:/rules prom/prometheus promtool check rules /rules/alerts.yml
+    status:
+      - test ! -f observability/alerts.yml
+
+  validate:dashboard:
+    desc: Validate Grafana dashboard JSON
+    cmds:
+      - |
+        for f in observability/dashboards/*.json; do
+          echo "Validating $f..."
+          jq empty "$f" || exit 1
+        done
+    status:
+      - test ! -d observability/dashboards
