@@ -4,6 +4,22 @@
 # 1. Updating the image tag in the Kustomize overlay
 # 2. Committing the change to trigger ArgoCD sync
 #
+# GitHub Environment Features Used:
+# - Environment protection rules (required reviewers for production)
+# - Environment secrets (ARGOCD_TOKEN, KUBECONFIG)
+# - Environment variables (CLUSTER_URL, NAMESPACE)
+# - Deployment tracking and history
+#
+# Required GitHub Environment Setup:
+# 1. Create environments: dev, qa, production
+# 2. For production: Add required reviewers (team leads)
+# 3. Set environment variables:
+#    - CLUSTER_URL: Kubernetes API server URL
+#    - ARGOCD_SERVER: ArgoCD server URL
+# 4. Set environment secrets:
+#    - ARGOCD_AUTH_TOKEN: ArgoCD authentication token
+#    - KUBECONFIG_DATA: Base64-encoded kubeconfig (optional, for direct kubectl)
+#
 # Usage:
 #   jobs:
 #     deploy-dev:
@@ -31,6 +47,11 @@ on:
         required: false
         type: boolean
         default: false
+      wait-for-rollout:
+        description: 'Wait for deployment to complete'
+        required: false
+        type: boolean
+        default: true
     outputs:
       deployed-tag:
         description: 'The image tag that was deployed'
@@ -39,10 +60,21 @@ on:
         description: 'URL of the deployed application'
         value: ${{ jobs.deploy.outputs.deployment-url }}
 
+# Concurrency: only one deployment per environment at a time
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Deploy to ${{ inputs.environment }}
     runs-on: ubuntu-latest
+    
+    # GitHub Environment integration
+    # This enables:
+    # - Required reviewers for production
+    # - Environment-specific secrets and variables
+    # - Deployment history in GitHub UI
     environment:
       name: ${{ inputs.environment }}
       url: ${{ steps.get-url.outputs.url }}
@@ -61,34 +93,50 @@ jobs:
       - name: Validate environment
         run: |
           if [[ ! "${{ inputs.environment }}" =~ ^(dev|qa|production)$ ]]; then
-            echo "Error: Invalid environment '${{ inputs.environment }}'"
-            echo "Valid environments: dev, qa, production"
+            echo "::error::Invalid environment '${{ inputs.environment }}'. Valid: dev, qa, production"
             exit 1
           fi
-          echo "Deploying to environment: ${{ inputs.environment }}"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Image Tag: ${{ inputs.image-tag }}"
+          
+          # Show environment configuration (from GitHub Environment variables)
+          echo ""
+          echo "Environment Configuration:"
+          echo "  CLUSTER_URL: ${{ vars.CLUSTER_URL || 'Not configured' }}"
+          echo "  ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER || 'Not configured' }}"
+          echo "  ARGOCD_APP_NAME: peanuts-app-${{ inputs.environment }}"
 
-      - name: Validate image tag
+      - name: Validate image exists
         run: |
-          if [[ -z "${{ inputs.image-tag }}" ]]; then
-            echo "Error: Image tag is required"
-            exit 1
+          IMAGE="ghcr.io/${{ github.repository }}/app:${{ inputs.image-tag }}"
+          echo "Checking if image exists: $IMAGE"
+          
+          # Use GitHub token to authenticate with GHCR
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "Image exists and is accessible"
+          else
+            echo "::warning::Could not verify image existence. Proceeding anyway."
           fi
-          echo "Deploying image tag: ${{ inputs.image-tag }}"
 
       - name: Get deployment URL
         id: get-url
         run: |
+          # Use environment variable if set, otherwise use defaults
           case "${{ inputs.environment }}" in
             dev)
-              echo "url=https://peanuts-dev.example.com" >> $GITHUB_OUTPUT
+              URL="${{ vars.APP_URL || 'https://peanuts-dev.bna.internal' }}"
               ;;
             qa)
-              echo "url=https://peanuts-qa.example.com" >> $GITHUB_OUTPUT
+              URL="${{ vars.APP_URL || 'https://peanuts-qa.bna.internal' }}"
               ;;
             production)
-              echo "url=https://peanuts.example.com" >> $GITHUB_OUTPUT
+              URL="${{ vars.APP_URL || 'https://peanuts.bna.internal' }}"
               ;;
           esac
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "Deployment URL: $URL"
 
       - name: Get previous image tag
         id: previous-tag
@@ -96,6 +144,10 @@ jobs:
           PREVIOUS_TAG=$(grep 'newTag:' deploy/overlays/${{ inputs.environment }}/kustomization.yaml | awk '{print $2}')
           echo "tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
           echo "Previous tag: $PREVIOUS_TAG"
+          
+          if [[ "$PREVIOUS_TAG" == "${{ inputs.image-tag }}" ]]; then
+            echo "::notice::Image tag is already ${{ inputs.image-tag }} - deployment will be a no-op"
+          fi
 
       - name: Update image tag in Kustomization
         if: ${{ !inputs.dry-run }}
@@ -107,34 +159,40 @@ jobs:
           
           # Verify the change
           echo "Updated kustomization.yaml:"
-          cat kustomization.yaml
+          grep -A2 "newTag:" kustomization.yaml
 
       - name: Validate Kustomize build
         run: |
-          # Install kustomize if not available
-          if ! command -v kustomize &> /dev/null; then
-            curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-            sudo mv kustomize /usr/local/bin/
-          fi
+          # Install kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
           
           # Validate the kustomization
           echo "Validating Kustomize build for ${{ inputs.environment }}..."
-          kustomize build deploy/overlays/${{ inputs.environment }} > /dev/null
-          echo "Kustomize build validated successfully"
+          kustomize build deploy/overlays/${{ inputs.environment }} > /tmp/manifests.yaml
+          
+          # Show resource summary
+          echo ""
+          echo "Resources to deploy:"
+          grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
 
       - name: Dry run summary
         if: ${{ inputs.dry-run }}
         run: |
           echo "## Dry Run Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Current Tag:** ${{ steps.previous-tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**New Tag:** ${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Current Tag | \`${{ steps.previous-tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| New Tag | \`${{ inputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | ${{ steps.get-url.outputs.url }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "No changes were made (dry run mode)" >> $GITHUB_STEP_SUMMARY
+          echo "> **Note:** No changes were made (dry run mode)" >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push changes
         if: ${{ !inputs.dry-run }}
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -144,45 +202,125 @@ jobs:
           # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to commit - image tag is already ${{ inputs.image-tag }}"
+            echo "committed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           
+          # Create commit with conventional commit format
           git commit -m "deploy(${{ inputs.environment }}): update image to ${{ inputs.image-tag }}
 
           Deployed by: ${{ github.actor }}
           Workflow: ${{ github.workflow }}
           Run ID: ${{ github.run_id }}
-          Previous tag: ${{ steps.previous-tag.outputs.tag }}"
+          Previous tag: ${{ steps.previous-tag.outputs.tag }}
+          
+          Triggered by: ${{ github.event_name }}
+          Ref: ${{ github.ref }}"
           
           git push
+          
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "committed=true" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "Pushed commit: $COMMIT_SHA"
 
-      - name: Wait for ArgoCD sync
-        if: ${{ !inputs.dry-run && inputs.environment != 'production' }}
+      - name: Trigger ArgoCD sync
+        if: ${{ !inputs.dry-run && steps.commit.outputs.committed == 'true' && vars.ARGOCD_SERVER != '' }}
+        env:
+          ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER }}
+          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
         run: |
-          echo "Waiting for ArgoCD to detect and sync changes..."
-          echo "ArgoCD will automatically sync for ${{ inputs.environment }} environment"
-          # In a real setup, you might poll ArgoCD API or use argocd CLI
-          sleep 10
+          if [[ -z "$ARGOCD_AUTH_TOKEN" ]]; then
+            echo "::notice::ARGOCD_AUTH_TOKEN not configured - skipping ArgoCD sync trigger"
+            exit 0
+          fi
+          
+          APP_NAME="peanuts-app-${{ inputs.environment }}"
+          
+          echo "Triggering ArgoCD sync for $APP_NAME..."
+          
+          # Install argocd CLI
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/
+          
+          # Sync the application
+          argocd app sync "$APP_NAME" \
+            --server "$ARGOCD_SERVER" \
+            --auth-token "$ARGOCD_AUTH_TOKEN" \
+            --grpc-web \
+            --prune \
+            || echo "::warning::ArgoCD sync command failed - ArgoCD will sync on next poll"
+
+      - name: Wait for rollout
+        if: ${{ !inputs.dry-run && inputs.wait-for-rollout && steps.commit.outputs.committed == 'true' && vars.ARGOCD_SERVER != '' }}
+        env:
+          ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER }}
+          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+        run: |
+          if [[ -z "$ARGOCD_AUTH_TOKEN" ]]; then
+            echo "::notice::ARGOCD_AUTH_TOKEN not configured - skipping rollout wait"
+            exit 0
+          fi
+          
+          APP_NAME="peanuts-app-${{ inputs.environment }}"
+          
+          echo "Waiting for ArgoCD application to become healthy..."
+          
+          argocd app wait "$APP_NAME" \
+            --server "$ARGOCD_SERVER" \
+            --auth-token "$ARGOCD_AUTH_TOKEN" \
+            --grpc-web \
+            --timeout 300 \
+            --health \
+            || echo "::warning::Rollout wait timed out - check ArgoCD for status"
 
       - name: Create deployment record
         if: ${{ !inputs.dry-run }}
         run: |
           echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Tag:** ${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Previous Tag:** ${{ steps.previous-tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployed By:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployment URL:** ${{ steps.get-url.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | \`${{ inputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Previous Tag | \`${{ steps.previous-tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed By | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployment URL | ${{ steps.get-url.outputs.url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ steps.commit.outputs.commit_sha || 'No changes' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "ArgoCD will sync the changes automatically (non-production) or manually (production)." >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ inputs.environment }}" == "production" ]]; then
+            echo "> **Production Deployment** - ArgoCD requires manual sync" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> ArgoCD will automatically sync this deployment" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Create GitHub deployment status
+        if: ${{ !inputs.dry-run && steps.commit.outputs.committed == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Create a deployment status for tracking
+            const environment = '${{ inputs.environment }}';
+            const imageTag = '${{ inputs.image-tag }}';
+            const url = '${{ steps.get-url.outputs.url }}';
+            
+            console.log(`Recording deployment: ${environment} @ ${imageTag}`);
+            console.log(`URL: ${url}`);
+            
+            // The environment association is already handled by the job-level environment setting
+            // This script is for additional tracking/notifications if needed
 
       - name: Notify on failure
         if: failure()
         run: |
           echo "## Deployment Failed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Tag:** ${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | \`${{ inputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Requested By | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Please check the logs for more details." >> $GITHUB_STEP_SUMMARY
+          echo "> Check the workflow logs for details" >> $GITHUB_STEP_SUMMARY

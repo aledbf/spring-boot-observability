@@ -4,7 +4,7 @@ metadata:
   name: peanuts-app
 spec:
   rules:
-    - host: peanuts-dev.example.com
+    - host: peanuts-dev.bna.internal
       http:
         paths:
           - path: /
@@ -16,5 +16,5 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - peanuts-dev.example.com
+        - peanuts-dev.bna.internal
       secretName: peanuts-app-tls-dev

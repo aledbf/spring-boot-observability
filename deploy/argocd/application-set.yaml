@@ -52,7 +52,7 @@ spec:
       project: default
 
       source:
-        repoURL: https://github.com/OWNER/spring-boot-observability.git
+        repoURL: https://github.com/bna/spring-boot-observability.git
         targetRevision: HEAD
         path: deploy/overlays/{{env}}
 

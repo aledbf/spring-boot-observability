@@ -17,7 +17,7 @@ resources:
 # Image will be updated by CI/CD pipeline
 images:
   - name: peanuts-app
-    newName: ghcr.io/OWNER/spring-boot-observability
+    newName: ghcr.io/bna/spring-boot-observability/app
     newTag: latest  # Updated by deploy workflow
 
 patches:

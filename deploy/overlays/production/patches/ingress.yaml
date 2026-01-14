@@ -8,7 +8,7 @@ metadata:
     nginx.ingress.kubernetes.io/rate-limit-window: "1m"
 spec:
   rules:
-    - host: peanuts.example.com
+    - host: peanuts.bna.internal
       http:
         paths:
           - path: /
@@ -20,5 +20,5 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - peanuts.example.com
+        - peanuts.bna.internal
       secretName: peanuts-app-tls-production
